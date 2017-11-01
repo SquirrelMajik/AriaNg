@@ -159,6 +159,7 @@
 
                 for (var i = 0; i < task.files.length; i++) {
                     var file = task.files[i];
+                    file.index = parseInt(file.index);
                     file.fileName = getFileName(file);
                     file.length = parseInt(file.length);
                     file.selected = (file.selected === true || file.selected === 'true');
@@ -169,6 +170,24 @@
                 }
 
                 task.selectedFileCount = selectedFileCount;
+            }
+
+            if (task.files && task.files.length === 1 && task.files[0].uris && task.files[0].uris[0]) {
+                var isSingleUrlTask = true;
+                var firstUri = task.files[0].uris[0].uri;
+
+                for (var i = 0; i < task.files[0].uris.length; i++) {
+                    var uri = task.files[0].uris[i].uri;
+
+                    if (uri !== firstUri) {
+                        isSingleUrlTask = false;
+                        break;
+                    }
+                }
+
+                if (isSingleUrlTask) {
+                    task.singleUrl = firstUri;
+                }
             }
 
             return task;
@@ -477,7 +496,7 @@
                                 ariaNgLogService.warn('[aria2TaskService.restartTask] task file is null');
                             }
 
-                            if (task.files.length != 1) {
+                            if (task.files.length !== 1) {
                                 ariaNgLogService.warn('[aria2TaskService.restartTask] task file length is not equal 1');
                             }
 
