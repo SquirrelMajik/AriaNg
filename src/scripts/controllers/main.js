@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    angular.module('ariaNg').controller('MainController', ['$rootScope', '$scope', '$route', '$window', '$location', '$document', '$interval', 'aria2RpcErrors', 'ariaNgCommonService', 'ariaNgSettingService', 'ariaNgTitleService', 'ariaNgMonitorService', 'ariaNgNotificationService', 'aria2TaskService', 'aria2SettingService', function ($rootScope, $scope, $route, $window, $location, $document, $interval, aria2RpcErrors, ariaNgCommonService, ariaNgSettingService, ariaNgTitleService, ariaNgMonitorService, ariaNgNotificationService, aria2TaskService, aria2SettingService) {
+    angular.module('ariaNg').controller('MainController', ['$rootScope', '$scope', '$route', '$window', '$location', '$document', '$interval', 'clipboard', 'ariaNgBuildConfiguration', 'aria2RpcErrors', 'ariaNgCommonService', 'ariaNgNotificationService', 'ariaNgLocalizationService', 'ariaNgSettingService', 'ariaNgMonitorService', 'ariaNgTitleService', 'aria2TaskService', 'aria2SettingService', function ($rootScope, $scope, $route, $window, $location, $document, $interval, clipboard, ariaNgBuildConfiguration, aria2RpcErrors, ariaNgCommonService, ariaNgNotificationService, ariaNgLocalizationService, ariaNgSettingService, ariaNgMonitorService, ariaNgTitleService, aria2TaskService, aria2SettingService) {
         var pageTitleRefreshPromise = null;
         var globalStatRefreshPromise = null;
 
@@ -31,9 +31,15 @@
             ariaNgNotificationService.requestBrowserPermission();
         }
 
+        $scope.ariaNgVersion = ariaNgBuildConfiguration.buildVersion;
+
         $scope.globalStatusContext = {
             isEnabled: ariaNgSettingService.getGlobalStatRefreshInterval() > 0,
             data: ariaNgMonitorService.getGlobalStatsData()
+        };
+
+        $scope.enableDebugMode = function () {
+            return ariaNgSettingService.isEnableDebugMode();
         };
 
         $scope.quickSettingContext = null;
@@ -42,6 +48,16 @@
 
         $scope.isTaskSelected = function () {
             return $rootScope.taskContext.getSelectedTaskIds().length > 0;
+        };
+
+        $scope.isSingleUrlTaskSelected = function () {
+            var selectedTask = $rootScope.taskContext.getSelectedTasks();
+
+            if (selectedTask.length !== 1) {
+                return false;
+            }
+
+            return !!selectedTask[0].singleUrl;
         };
 
         $scope.isSpecifiedTaskSelected = function () {
@@ -99,7 +115,7 @@
 
             $rootScope.loadPromise = invoke(gids, function (response) {
                 if (response.hasError && gids.length > 1) {
-                    ariaNgCommonService.showError('Failed to change some tasks state.');
+                    ariaNgLocalizationService.showError('Failed to change some tasks state.');
                 }
 
                 if (!response.hasSuccess) {
@@ -124,25 +140,102 @@
             }, (gids.length > 1));
         };
 
-        $scope.restart = function (task) {
-            ariaNgCommonService.confirm('Confirm Restart', 'Are you sure you want to restart this task? AriaNg will create a same task after clicking OK.', 'info', function () {
-                $rootScope.loadPromise = aria2TaskService.restartTask(task.gid, function (response) {
+        $scope.retryTask = function (task) {
+            ariaNgLocalizationService.confirm('Confirm Retry', 'Are you sure you want to retry the selected task? AriaNg will create same task after clicking OK.', 'info', function () {
+                $rootScope.loadPromise = aria2TaskService.retryTask(task.gid, function (response) {
                     if (!response.success) {
-                        ariaNgCommonService.showError('Failed to restart this task.');
+                        ariaNgLocalizationService.showError('Failed to retry this task.');
                         return;
                     }
 
                     refreshGlobalStat(true);
 
-                    if (response.success) {
-                        if ($location.path() !== '/downloading') {
-                            $location.path('/downloading');
+                    var actionAfterRetryingTask = ariaNgSettingService.getAfterRetryingTask();
+
+                    if (response.success && response.data) {
+                        if (actionAfterRetryingTask === 'task-list-downloading') {
+                            if ($location.path() !== '/downloading') {
+                                $location.path('/downloading');
+                            } else {
+                                $route.reload();
+                            }
+                        } else if (actionAfterRetryingTask === 'task-detail') {
+                            $location.path('/task/detail/' + response.data);
                         } else {
                             $route.reload();
                         }
                     }
                 }, false);
             });
+        };
+
+        $scope.isTaskRetryable = function (task) {
+            return task && task.status === 'error' && task.errorDescription && !task.bittorrent;
+        };
+
+        $scope.isSelectedTaskRetryable = function () {
+            var selectedTasks = $rootScope.taskContext.getSelectedTasks();
+
+            if (selectedTasks.length < 1) {
+                return false;
+            }
+
+            for (var i = 0; i < selectedTasks.length; i++) {
+                if (!$scope.isTaskRetryable(selectedTasks[i])) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        $scope.retryTasks = function () {
+            var tasks = $rootScope.taskContext.getSelectedTasks();
+
+            if (!tasks || tasks.length < 1) {
+                return;
+            } else if (tasks.length === 1) {
+                return $scope.retryTask(tasks[0]);
+            }
+
+            var retryableTasks = [];
+            var skipCount = 0;
+
+            for (var i = 0; i < tasks.length; i++) {
+                if ($scope.isTaskRetryable(tasks[i])) {
+                    retryableTasks.push(tasks[i]);
+                } else {
+                    skipCount++;
+                }
+            }
+
+            ariaNgLocalizationService.confirm('Confirm Retry', 'Are you sure you want to retry the selected task? AriaNg will create same task after clicking OK.', 'info', function () {
+                $rootScope.loadPromise = aria2TaskService.retryTasks(retryableTasks, function (response) {
+                    refreshGlobalStat(true);
+
+                    ariaNgLocalizationService.showInfo('Operation Result', '{{successCount}} tasks have been retried and {{failedCount}} tasks are failed.', function () {
+                        var actionAfterRetryingTask = ariaNgSettingService.getAfterRetryingTask();
+
+                        if (response.hasSuccess) {
+                            if (actionAfterRetryingTask === 'task-list-downloading') {
+                                if ($location.path() !== '/downloading') {
+                                    $location.path('/downloading');
+                                } else {
+                                    $route.reload();
+                                }
+                            } else {
+                                $route.reload();
+                            }
+                        }
+                    }, {
+                        textParams: {
+                            successCount: response.successCount,
+                            failedCount: response.failedCount,
+                            skipCount: skipCount
+                        }
+                    });
+                }, false);
+            }, true);
         };
 
         $scope.removeTasks = function () {
@@ -152,10 +245,10 @@
                 return;
             }
 
-            ariaNgCommonService.confirm('Confirm Remove', 'Are you sure you want to remove the selected task?', 'warning', function () {
+            ariaNgLocalizationService.confirm('Confirm Remove', 'Are you sure you want to remove the selected task?', 'warning', function () {
                 $rootScope.loadPromise = aria2TaskService.removeTasks(tasks, function (response) {
                     if (response.hasError && tasks.length > 1) {
-                        ariaNgCommonService.showError('Failed to remove some task(s).');
+                        ariaNgLocalizationService.showError('Failed to remove some task(s).');
                     }
 
                     if (!response.hasSuccess) {
@@ -176,7 +269,7 @@
         };
 
         $scope.clearStoppedTasks = function () {
-            ariaNgCommonService.confirm('Confirm Clear', 'Are you sure you want to clear stopped tasks?', 'warning', function () {
+            ariaNgLocalizationService.confirm('Confirm Clear', 'Are you sure you want to clear stopped tasks?', 'warning', function () {
                 $rootScope.loadPromise = aria2TaskService.clearStoppedTasks(function (response) {
                     if (!response.success) {
                         return;
@@ -193,8 +286,20 @@
             });
         };
 
+        $scope.isAllTasksSelected = function () {
+            return $rootScope.taskContext.isAllSelected();
+        };
+
         $scope.selectAllTasks = function () {
             $rootScope.taskContext.selectAll();
+        };
+
+        $scope.copySelectedOneTaskDownloadLink = function () {
+            var selectedTask = $rootScope.taskContext.getSelectedTasks();
+
+            if (selectedTask.length === 1) {
+                clipboard.copyText(selectedTask[0].singleUrl);
+            }
         };
 
         $scope.changeDisplayOrder = function (type, autoSetReverse) {

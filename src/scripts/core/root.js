@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    angular.module('ariaNg').run(['$rootScope', '$location', '$document', 'SweetAlert', 'ariaNgNotificationService', 'ariaNgSettingService', 'aria2TaskService', function ($rootScope, $location, $document, SweetAlert, ariaNgNotificationService, ariaNgSettingService, aria2TaskService) {
+    angular.module('ariaNg').run(['$rootScope', '$location', '$document', 'ariaNgCommonService', 'ariaNgLocalizationService', 'ariaNgLogService', 'ariaNgSettingService', 'aria2TaskService', function ($rootScope, $location, $document, ariaNgCommonService, ariaNgLocalizationService, ariaNgLogService, ariaNgSettingService, aria2TaskService) {
         var isUrlMatchUrl2 = function (url, url2) {
             if (url === url2) {
                 return true;
@@ -20,6 +20,31 @@
             }
 
             return false;
+        };
+
+        var initCheck = function () {
+            var browserFeatures = ariaNgSettingService.getBrowserFeatures();
+
+            if (!browserFeatures.localStroage) {
+                ariaNgLogService.warn('[root.initCheck] LocalStorage is not supported!');
+            }
+
+            if (!browserFeatures.cookies) {
+                ariaNgLogService.warn('[root.initCheck] Cookies is not supported!');
+            }
+
+            if (!ariaNgSettingService.isBrowserSupportStorage()) {
+                angular.element('body').prepend('<div class="disable-overlay"></div>');
+                angular.element('.main-sidebar').addClass('blur');
+                angular.element('.navbar').addClass('blur');
+                angular.element('.content-body').addClass('blur');
+                ariaNgLocalizationService.notifyInPage('', 'You cannot use AriaNg because this browser does not support data storage.', {
+                    type: 'error',
+                    delay: false
+                });
+
+                throw new Error('You cannot use AriaNg because this browser does not support data storage.');
+            }
         };
 
         var initNavbar = function () {
@@ -108,15 +133,7 @@
 
                 return result;
             },
-            selectAll: function () {
-                if (!this.list || !this.selected || this.list.length < 1) {
-                    return;
-                }
-
-                if (!this.enableSelectAll) {
-                    return;
-                }
-
+            isAllSelected: function () {
                 var isAllSelected = true;
 
                 for (var i = 0; i < this.list.length; i++) {
@@ -127,6 +144,19 @@
                         break;
                     }
                 }
+
+                return isAllSelected;
+            },
+            selectAll: function () {
+                if (!this.list || !this.selected || this.list.length < 1) {
+                    return;
+                }
+
+                if (!this.enableSelectAll) {
+                    return;
+                }
+
+                var isAllSelected = this.isAllSelected();
 
                 for (var i = 0; i < this.list.length; i++) {
                     var task = this.list[i];
@@ -156,7 +186,7 @@
         };
 
         ariaNgSettingService.onFirstAccess(function () {
-            ariaNgNotificationService.notifyInPage('', 'Tap to configure and get started with AriaNg.', {
+            ariaNgLocalizationService.notifyInPage('', 'Tap to configure and get started with AriaNg.', {
                 delay: false,
                 onClose: function () {
                     $location.path('/settings/ariang');
@@ -164,34 +194,37 @@
             });
         });
 
-        aria2TaskService.onFirstSuccess(function () {
-            ariaNgNotificationService.notifyInPage('', 'Connection Succeeded', {
-                type: 'success'
+        aria2TaskService.onFirstSuccess(function (event) {
+            ariaNgLocalizationService.notifyInPage('', '{{name}} is connected', {
+                type: 'success',
+                contentParams: {
+                    name: event.rpcName
+                }
             });
         });
 
-        aria2TaskService.onConnectSuccess(function () {
+        aria2TaskService.onOperationSuccess(function () {
             $rootScope.taskContext.rpcStatus = 'Connected';
         });
 
-        aria2TaskService.onConnectError(function () {
-            $rootScope.taskContext.rpcStatus = 'Not Connected';
+        aria2TaskService.onOperationError(function () {
+            $rootScope.taskContext.rpcStatus = 'Disconnected';
         });
 
         aria2TaskService.onTaskCompleted(function (event) {
-            ariaNgNotificationService.notifyTaskComplete(event.task);
+            ariaNgLocalizationService.notifyTaskComplete(event.task);
         });
 
         aria2TaskService.onBtTaskCompleted(function (event) {
-            ariaNgNotificationService.notifyBtTaskComplete(event.task);
+            ariaNgLocalizationService.notifyBtTaskComplete(event.task);
         });
 
         aria2TaskService.onTaskErrorOccur(function (event) {
-            ariaNgNotificationService.notifyTaskError(event.task);
+            ariaNgLocalizationService.notifyTaskError(event.task);
         });
 
         $rootScope.$on('$locationChangeStart', function (event) {
-            SweetAlert.close();
+            ariaNgCommonService.closeAllDialogs();
 
             $rootScope.loadPromise = null;
 
@@ -216,6 +249,7 @@
             $document.unbind('keypress');
         });
 
+        initCheck();
         initNavbar();
     }]);
 }());
